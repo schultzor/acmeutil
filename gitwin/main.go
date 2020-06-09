@@ -241,7 +241,6 @@ func readLog(h *handler, l *acme.LogReader) {
 		if err != nil {
 			log.Fatal(err)
 		}
-		// file was put for somewhere in our repo,
 		if event.Name != "" && event.Op == "put" && strings.HasPrefix(event.Name, h.path) && event.Name != h.path {
 			debugf("readLog handling %v\n", event)
 			h.ExecGet("")
