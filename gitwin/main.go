@@ -29,8 +29,7 @@ type handler struct {
 }
 
 func tsbranch() string {
-	now := time.Now()
-	return fmt.Sprintf("patch-%4d%02d%02d-%02d%02d", now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute())
+	return "patch-" + time.Now().Format("20060102-1504")
 }
 
 func (h *handler) branch() string {
@@ -60,12 +59,18 @@ func (h *handler) git(args ...string) error {
 
 func (h *handler) ExecGet(cmd string) {
 	debugf("doing ExecGet [%s]\n", cmd)
-	currBranch := h.branch()
+	status, err := h.gitPorcelain()
+	if err != nil {
+		log.Fatalf("error getting status: %v", err)
+	}
+	debugf("status: %v", status)
 	coName := "master"
-	if currBranch == "master" {
+	if status.branch == "master" {
 		coName = tsbranch()
 	}
-	fmt.Fprintf(&h.buf, "on %s\nCheckout %s\nCommit fix: something broken\n", currBranch, coName)
+	fmt.Fprintf(&h.buf, "on %s tracking %s\nCheckout %s\nCommit fix: something\n", status.branch, status.upstream, coName)
+	formatStatus(&h.buf, status)
+	fmt.Fprintf(&h.buf, "----------\n")
 	h.git("status", "--porcelain", "-uall")
 	h.flush()
 }
@@ -84,6 +89,14 @@ func (h *handler) ExecHelp(cmd string) {
 
 func (h *handler) ExecAdd(cmd string) {
 	if h.git("add", cmd) != nil {
+		h.flush()
+	} else {
+		h.ExecGet("")
+	}
+}
+
+func (h *handler) ExecUnstage(cmd string) {
+	if h.git("restore", "--staged", cmd) != nil {
 		h.flush()
 	} else {
 		h.ExecGet("")
@@ -210,28 +223,7 @@ func (h *handler) Look(arg string) bool {
 	return false
 }
 
-var addPrefixes = []string{
-	"?? ",
-	" M ",
-	"M ", // acme EventHandler interface swallows leading space
-	"AM ",
-	"MM ",
-	" D ",
-}
-
 func (h *handler) Execute(cmd string) bool {
-	debugf("handling Execute: [%s]\n", cmd)
-	if cmd == "Del" {
-		return false
-	}
-	for _, p := range addPrefixes {
-		if strings.HasPrefix(cmd, p) {
-			debugf("doing ExecAdd for [%s]\n", cmd)
-			argVal := strings.TrimSpace(cmd[len(p):])
-			h.ExecAdd(argVal)
-			return true
-		}
-	}
 	return false
 }
 
