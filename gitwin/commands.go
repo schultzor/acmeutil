@@ -9,11 +9,6 @@ import (
 	"9fans.net/go/acme"
 )
 
-func (h *handler) ExecGuiDiff(cmd string) {
-	h.git("difftool", "-gy")
-	h.flush()
-}
-
 func (h *handler) ExecTrackOrigin(cmd string) {
 	status, err := h.gitPorcelain()
 	if err != nil {
@@ -121,7 +116,7 @@ func (h *handler) ExecDiff(cmd string) {
 }
 
 func (h *handler) ExecDifftool(cmd string) {
-	h.git("difftool")
+	h.git("difftool", "-y")
 	h.flush()
 }
 
