@@ -2,7 +2,7 @@
 //
 // Usage:
 //
-// 	godocs [-all] [-get] search_string
+// 	godocs search_string
 //
 // Button 3 clicks in a godocs window will spawn child windows for the symbol name that's search for,
 // so you can "drill down" for docs on particular functions or types within a single go package.
@@ -11,6 +11,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os/exec"
 	"strings"
@@ -18,14 +19,9 @@ import (
 	"9fans.net/go/acme"
 )
 
-var useAll bool
-var doGet bool
-
 func main() {
 	log.SetFlags(0)
 	log.SetPrefix("godocs: ")
-	flag.BoolVar(&useAll, "all", false, "pass -all flag to go doc when searching for module/symbol")
-	flag.BoolVar(&doGet, "get", true, "do 'go get' for the package before running 'go doc' on it")
 	flag.Parse()
 	args := flag.Args()
 	if len(args) < 1 {
@@ -34,34 +30,39 @@ func main() {
 	newwin([]string{args[0]})
 }
 
+// tracks state and has event handlers for each /godocs/ window
 type handler struct {
-	path []string
+	path   []string
+	useAll bool
+	useSrc bool
+	win    *acme.Win
 }
 
+// call `go doc` with appopriate flags for the given window state
+func (h *handler) godoc() {
+	args := []string{"doc"}
+	if h.useAll {
+		args = append(args, "-all")
+	}
+	if h.useSrc {
+		args = append(args, "-src")
+	}
+	args = append(args, strings.Join(h.path, "."))
+	cmd := exec.Command("go", args...)
+	out, err := cmd.CombinedOutput()
+	h.win.Clear()
+	if err != nil {
+		h.win.Write("body", []byte(fmt.Sprintf("error for '%v': %v", cmd, err)))
+	} else {
+		h.win.Write("body", out)
+	}
+	h.win.Ctl("clean")
+}
+
+// make a new window for the given package/symbol names to search for
 func newwin(names []string) {
 	if len(names) < 1 {
 		log.Printf("no search strings provided")
-		return
-	}
-	if doGet && len(names) == 1 {
-		getCmd := exec.Command("go", "get", names[0])
-		log.Println("running", getCmd)
-		_, err := getCmd.CombinedOutput()
-		if err != nil {
-			log.Printf("error doing '%s': %v", getCmd, err)
-			return
-		}
-	}
-	args := []string{"doc"}
-	if useAll {
-		args = append(args, "-all")
-	}
-	searchFor := strings.Join(names, ".")
-	args = append(args, searchFor)
-	cmd := exec.Command("go", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		log.Printf("error running %v: %v", cmd, err)
 		return
 	}
 	w, err := acme.New()
@@ -69,14 +70,38 @@ func newwin(names []string) {
 		log.Println("error creating window", err)
 		return
 	}
-	w.Name("/godocs/" + searchFor)
-	w.Write("body", out)
-	w.Ctl("clean")
-	w.EventLoop(&handler{names})
+	h := &handler{
+		path: names,
+		win:  w,
+	}
+	h.win.Name("/godocs/" + strings.Join(h.path, "."))
+	h.win.Write("tag", []byte("Get All Src"))
+	h.godoc()
+	w.EventLoop(h)
 }
 
 func (h *handler) Execute(cmd string) bool {
 	return false
+}
+
+func (h *handler) ExecAll(cmd string) {
+	h.useAll = !h.useAll
+	h.godoc()
+}
+
+func (h *handler) ExecSrc(cmd string) {
+	h.useSrc = !h.useSrc
+	h.godoc()
+}
+
+func (h *handler) ExecGet(cmd string) {
+	getCmd := exec.Command("go", "get", h.path[0])
+	_, err := getCmd.CombinedOutput()
+	if err != nil {
+		log.Printf("error doing '%s': %v", getCmd, err)
+		return
+	}
+	h.godoc()
 }
 
 func (h *handler) Look(arg string) bool {
