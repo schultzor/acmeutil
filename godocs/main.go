@@ -4,8 +4,9 @@
 //
 // 	godocs [search_string]
 //
-// Button 3 clicks in a godocs window will spawn child windows for the symbol name that's search for,
+// Clicking Button 3 in a godocs window will spawn a child window for the symbol name that's search for,
 // so you can "drill down" for docs on particular functions or types within a single go package.
+// Call this with no arguments will run `go list ...` to list all available go modules, which make take some time.
 
 package main
 

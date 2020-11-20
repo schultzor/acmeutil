@@ -1,3 +1,12 @@
+// gitwin is a hacky way to interact with git via an acme window
+//
+// Usage:
+//
+//	gitwin -path /path/to/gitrepo/root
+//
+// Available commands are defined in the commands.go, they can be enumerated by doing
+// a button 2 click on the "Help" command in the gitwin window.
+
 package main
 
 import (
