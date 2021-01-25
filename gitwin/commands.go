@@ -138,6 +138,11 @@ func (h *handler) ExecPull(cmd string) {
 	h.flush()
 }
 
+func (h *handler) ExecPullRebase(cmd string) {
+	h.git("pull", "--rebase")
+	h.flush()
+}
+
 func (h *handler) ExecPush(cmd string) {
 	status, err := h.gitPorcelain()
 	if err != nil {
