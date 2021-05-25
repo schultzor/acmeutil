@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"reflect"
 	"strings"
 
@@ -28,6 +29,31 @@ func (h *handler) ExecRemote(cmd string) {
 	h.flush()
 }
 
+func regularFile(p string) bool {
+	debugf("regularFile checking %s\n", p)
+	if fi, err := os.Lstat(p); err == nil && fi.Mode().IsRegular() {
+		return true
+	}
+	return false
+}
+
+func (h *handler) repoWindows(winCmd string) {
+	allWindows, _ := acme.Windows()
+	for _, w := range allWindows {
+		if strings.HasPrefix(w.Name, h.path) && regularFile(w.Name) {
+			if win, err := acme.Open(w.ID, nil); win != nil && err == nil {
+				// see acme(4) for ctl commands here
+				debugf("doing '%s' on window %d: %s", winCmd, w.ID, w.Name)
+				win.Ctl(winCmd)
+			}
+		}
+	}
+}
+
+func (h *handler) ExecDelWindows() {
+	h.repoWindows("del")
+}
+
 func (h *handler) ExecRevert(cmd string) {
 	debugf("doing ExecRevert [%s]\n", cmd)
 	args := []string{"checkout", "--"}
@@ -49,6 +75,7 @@ func (h *handler) ExecRevert(cmd string) {
 	}
 	h.flush()
 }
+
 func (h *handler) ExecAdd(cmd string) {
 	if h.git("add", cmd) != nil {
 		h.flush()
@@ -78,7 +105,7 @@ func (h *handler) ExecLs(cmd string) {
 func (h *handler) ExecCheckout(cmd string) {
 	debugf("doing ExecCheckout [%s]\n", cmd)
 	args := []string{"checkout"}
-	if cmd != "master" {
+	if cmd != "master" && cmd != "main" {
 		args = append(args, "-B")
 	}
 	args = append(args, cmd)
@@ -135,10 +162,11 @@ func (h *handler) ExecLog(cmd string) {
 
 func (h *handler) ExecPull(cmd string) {
 	h.git("pull")
+	h.repoWindows("get")
 	h.flush()
 }
 
-func (h *handler) ExecPullRebase(cmd string) {
+func (h *handler) ExecRebase(cmd string) {
 	h.git("pull", "--rebase")
 	h.flush()
 }
@@ -161,6 +189,7 @@ func (h *handler) ExecStatus(cmd string) {
 	h.git("status")
 	h.flush()
 }
+
 func (h *handler) ExecGet(cmd string) {
 	debugf("doing ExecGet [%s]\n", cmd)
 	status, err := h.gitPorcelain()
@@ -168,12 +197,13 @@ func (h *handler) ExecGet(cmd string) {
 		log.Fatalf("error getting status: %v", err)
 	}
 	debugf("status: %v", status)
-	coName := "master"
-	if status.branch == "master" {
+	coName := "master # main"
+	if status.branch == "master" || status.branch == "main" {
 		coName = tsbranch()
 	}
 	fmt.Fprintf(&h.buf, "on %s tracking %s\nCheckout %s\nCommit fix: something\n", status.branch, status.upstream, coName)
 	formatStatus(&h.buf, status)
+	h.repoWindows("get")
 	h.flush()
 }
 

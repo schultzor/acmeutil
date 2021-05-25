@@ -93,7 +93,7 @@ func main() {
 		log.Fatal(err)
 	}
 	w.Name(*repoPath + "/+git")
-	w.Write("tag", []byte("Get Diff Pull Push Ls Log Help"))
+	w.Write("tag", []byte("Get Diff Pull Rebase Push Ls Log Help"))
 	h := handler{path: *repoPath, w: w}
 	h.ExecGet("")
 	go readLog(&h, l)
