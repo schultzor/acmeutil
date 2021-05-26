@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"os"
@@ -9,6 +10,22 @@ import (
 
 	"9fans.net/go/acme"
 )
+
+func (h *handler) getMainName() string {
+	h.git("branch", "-l")
+	branchWords := strings.Fields(h.buf.String())
+	h.buf = bytes.Buffer{}
+	debugf("branch output: %v", branchWords)
+	for _, w := range branchWords {
+		switch w {
+		case "main":
+			return "main"
+		case "master":
+			return "master"
+		}
+	}
+	return ""
+}
 
 func (h *handler) ExecTrackOrigin(cmd string) {
 	status, err := h.gitPorcelain()
@@ -37,6 +54,17 @@ func regularFile(p string) bool {
 	return false
 }
 
+// return just the strings in a slice that represent existing regular files
+func filterFilePaths(words []string) []string {
+	ret := []string{}
+	for _, w := range words {
+		if regularFile(w) {
+			ret = append(ret, w)
+		}
+	}
+	return ret
+}
+
 func (h *handler) repoWindows(winCmd string) {
 	allWindows, _ := acme.Windows()
 	for _, w := range allWindows {
@@ -57,9 +85,10 @@ func (h *handler) ExecDelWindows() {
 func (h *handler) ExecRevert(cmd string) {
 	debugf("doing ExecRevert [%s]\n", cmd)
 	args := []string{"checkout", "--"}
-	files := strings.Fields(cmd)
+	files := filterFilePaths(strings.Fields(cmd))
 	args = append(args, files...)
 	h.git(args...)
+
 	allWindows, _ := acme.Windows()
 	for _, filename := range files {
 		for _, w := range allWindows {
@@ -77,7 +106,10 @@ func (h *handler) ExecRevert(cmd string) {
 }
 
 func (h *handler) ExecAdd(cmd string) {
-	if h.git("add", cmd) != nil {
+	files := filterFilePaths(strings.Fields(cmd))
+	args := []string{"add"}
+	args = append(args, files...)
+	if h.git(args...) != nil {
 		h.flush()
 	} else {
 		h.ExecGet("")
@@ -85,7 +117,10 @@ func (h *handler) ExecAdd(cmd string) {
 }
 
 func (h *handler) ExecUnstage(cmd string) {
-	if h.git("restore", "--staged", cmd) != nil {
+	files := filterFilePaths(strings.Fields(cmd))
+	args := []string{"restore", "--staged"}
+	args = append(args, files...)
+	if h.git(args...) != nil {
 		h.flush()
 	} else {
 		h.ExecGet("")
@@ -114,6 +149,7 @@ func (h *handler) ExecCheckout(cmd string) {
 	} else {
 		h.ExecGet("")
 	}
+	h.repoWindows("get")
 }
 
 func (h *handler) ExecCommit(cmd string) {
@@ -168,6 +204,7 @@ func (h *handler) ExecPull(cmd string) {
 
 func (h *handler) ExecRebase(cmd string) {
 	h.git("pull", "--rebase")
+	h.repoWindows("get")
 	h.flush()
 }
 
@@ -185,6 +222,10 @@ func (h *handler) ExecPush(cmd string) {
 	h.flush()
 }
 
+func (h *handler) ExecGetWindows(cmd string) {
+	h.repoWindows("get")
+}
+
 func (h *handler) ExecStatus(cmd string) {
 	h.git("status")
 	h.flush()
@@ -197,13 +238,12 @@ func (h *handler) ExecGet(cmd string) {
 		log.Fatalf("error getting status: %v", err)
 	}
 	debugf("status: %v", status)
-	coName := "master # main"
+	coName := h.getMainName()
 	if status.branch == "master" || status.branch == "main" {
 		coName = tsbranch()
 	}
 	fmt.Fprintf(&h.buf, "on %s tracking %s\nCheckout %s\nCommit fix: something\n", status.branch, status.upstream, coName)
 	formatStatus(&h.buf, status)
-	h.repoWindows("get")
 	h.flush()
 }
 
