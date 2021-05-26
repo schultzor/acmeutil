@@ -77,7 +77,7 @@ func readLog(h *handler, l *acme.LogReader) {
 }
 
 func main() {
-	log.SetPrefix("gitwin")
+	log.SetPrefix("gitwin ")
 	pwd, err := os.Getwd()
 	if err != nil {
 		log.Fatal(err)
