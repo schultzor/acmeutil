@@ -51,7 +51,12 @@ func (h *handler) git(args ...string) error {
 	cmd.Dir = h.path
 	cmd.Stdout = &h.buf
 	cmd.Stderr = &h.buf
-	return cmd.Run()
+	debugf("running: %v", cmd)
+	err := cmd.Run()
+	if err != nil {
+		debugf("git error for %v: %v", cmd, err)
+	}
+	return err
 }
 
 func (h *handler) Look(arg string) bool {
@@ -84,6 +89,9 @@ func main() {
 	}
 	repoPath := flag.String("path", pwd, "path to repo root dir")
 	flag.Parse()
+	if err := os.Chdir(*repoPath); err != nil {
+		log.Fatal("error doing chdir to repo:", err)
+	}
 	w, err := acme.New()
 	if err != nil {
 		log.Fatal(err)
