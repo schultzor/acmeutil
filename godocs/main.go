@@ -132,6 +132,9 @@ func (h *handler) Look(arg string) bool {
 	if arg[0] == ':' { // allow for selecting buffer, e.g. ':,'
 		return false
 	}
+	if strings.HasPrefix(arg, "http://") || strings.HasPrefix(arg, "https://") {
+		return false
+	}
 	// launch a child window for the symbol/package name that was looked for
 	go func() {
 		child := newhandler()
