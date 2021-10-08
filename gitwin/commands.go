@@ -46,6 +46,8 @@ func (h *handler) ExecRemote(cmd string) {
 	h.flush()
 }
 
+type wordFilterFunc func(string) bool
+
 func regularFile(p string) bool {
 	debugf("regularFile checking %s\n", p)
 	if fi, err := os.Lstat(p); err == nil && fi.Mode().IsRegular() {
@@ -54,11 +56,10 @@ func regularFile(p string) bool {
 	return false
 }
 
-// return just the strings in a slice that represent existing regular files
-func filterFilePaths(words []string) []string {
+func filter(words []string, filt wordFilterFunc) []string {
 	ret := []string{}
 	for _, w := range words {
-		if regularFile(w) {
+		if filt(w) {
 			ret = append(ret, w)
 		}
 	}
@@ -85,7 +86,7 @@ func (h *handler) ExecDelWindows() {
 func (h *handler) ExecRevert(cmd string) {
 	debugf("doing ExecRevert [%s]\n", cmd)
 	args := []string{"checkout", "--"}
-	files := filterFilePaths(strings.Fields(cmd))
+	files := filter(strings.Fields(cmd), func(w string) bool { return w != "Revert" })
 	args = append(args, files...)
 	h.git(args...)
 
@@ -106,7 +107,7 @@ func (h *handler) ExecRevert(cmd string) {
 }
 
 func (h *handler) ExecAdd(cmd string) {
-	files := filterFilePaths(strings.Fields(cmd))
+	files := filter(strings.Fields(cmd), func(w string) bool { return w != "Add" })
 	args := []string{"add"}
 	args = append(args, files...)
 	if h.git(args...) != nil {
@@ -117,7 +118,7 @@ func (h *handler) ExecAdd(cmd string) {
 }
 
 func (h *handler) ExecUnstage(cmd string) {
-	files := filterFilePaths(strings.Fields(cmd))
+	files := filter(strings.Fields(cmd), func(w string) bool { return w != "Unstage" })
 	args := []string{"restore", "--staged"}
 	args = append(args, files...)
 	if h.git(args...) != nil {
@@ -180,7 +181,7 @@ func (h *handler) ExecDiff(cmd string) {
 
 func (h *handler) ExecDifftool(cmd string) {
 	h.git("difftool", "-y")
-	h.flush()
+	h.ExecGet("")
 }
 
 func (h *handler) ExecFetch(cmd string) {
