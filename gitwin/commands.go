@@ -170,10 +170,6 @@ func (h *handler) ExecCommit(cmd string) {
 	}
 }
 
-func (h *handler) ExecCommitAll(cmd string) {
-	h.ExecCommit("all:" + cmd)
-}
-
 func (h *handler) ExecDiff(cmd string) {
 	h.git("diff")
 	h.flush()
@@ -181,6 +177,11 @@ func (h *handler) ExecDiff(cmd string) {
 
 func (h *handler) ExecDifftool(cmd string) {
 	h.git("difftool", "-y")
+	h.ExecGet("")
+}
+
+func (h *handler) ExecMergetool(cmd string) {
+	h.git("mergetool", "-y")
 	h.ExecGet("")
 }
 
