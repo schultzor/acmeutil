@@ -14,58 +14,59 @@ type handler struct {
 	w *acme.Win
 }
 
+type delfunc func(w acme.WinInfo) bool
+
+const (
+	oldCutoff = time.Hour * 24 * 3
+)
+
+var (
+	// track the last time a window was interacted with
+	lastMod = make(map[int]time.Time)
+
+	// some windows are almost always ok to clean up
+	deleters = []delfunc{
+		func(w acme.WinInfo) bool { return w.Name == "Del" },
+		func(w acme.WinInfo) bool { return strings.HasPrefix(w.Name, "/godocs/") },
+		func(w acme.WinInfo) bool { return strings.HasSuffix(w.Name, "+Errors") && w.Name != "+Errors" },
+		func(w acme.WinInfo) bool { return strings.HasSuffix(w.Name, "+pg") },
+		func(w acme.WinInfo) bool { return strings.HasSuffix(w.Name, "+ff") },
+		func(w acme.WinInfo) bool {
+			if stat, err := os.Stat(w.Name); err == nil {
+				return stat.IsDir()
+			}
+			return false
+		},
+	}
+)
+
 func (h *handler) println(a ...interface{}) {
 	h.w.Write("body", []byte(fmt.Sprint(a...)+"\n"))
 	h.w.Ctl("clean")
 }
-
-func shouldDelete(w acme.WinInfo) bool {
-	if w.Name == "Del" {
-		return true
-	}
-	if strings.HasPrefix(w.Name, "/godocs/") {
-		return true
-	}
-	if strings.HasSuffix(w.Name, "+Errors") && w.Name != "+Errors" {
-		return true
-	}
-	if strings.HasSuffix(w.Name, "+pg") {
-		return true
-	}
-	if strings.HasSuffix(w.Name, "+ff") {
-		return true
-	}
-	stat, err := os.Stat(w.Name)
-	if err != nil {
-		return false
-	}
-	if stat.IsDir() {
-		return true
-	}
-	return false
-}
-
-// track the last time a window was interacted with
-var lastMod = make(map[int]time.Time)
-
-const oldCutoff = time.Hour * 24 * 5 // if I haven't touched a buffer in 5 days...
 
 func (h *handler) closeWin(winID int) {
 	wp, err := acme.Open(winID, nil)
 	if err != nil {
 		h.println("error opening window", winID, err)
 	}
-	h.println("deleting ", wp)
 	if err := wp.Del(false); err == nil {
 		h.println("error deleting window", winID, err)
 	}
 }
 
 func (h *handler) ExecTidy(cmd string) {
-	h.println("tidying up")
+	shouldDelete := func(w acme.WinInfo) bool {
+		for _, f := range deleters {
+			if f(w) {
+				return true
+			}
+		}
+		return false
+	}
 	for k, v := range lastMod {
 		if v.Before(time.Now().Add(-1 * oldCutoff)) {
-			h.println("deleting old window ", k, v)
+			h.closeWin(k)
 		}
 	}
 	allWin, err := acme.Windows()
@@ -79,7 +80,7 @@ func (h *handler) ExecTidy(cmd string) {
 	}
 }
 
-func (h *handler) ExecDebug(cmd string) {
+func (h *handler) ExecLog(cmd string) {
 	for k, v := range lastMod {
 		h.println("lastMod: ", k, v)
 	}
@@ -104,11 +105,9 @@ func readlog(h *handler) {
 		}
 		switch event.Op {
 		case "del":
-			//h.println(fmt.Sprint(event))
 			delete(lastMod, event.ID)
 		case "get":
 		case "focus":
-		// ignored
 		default:
 			h.println(fmt.Sprint(event))
 			lastMod[event.ID] = time.Now()
@@ -123,7 +122,7 @@ func main() {
 		log.Fatal(err)
 	}
 	w.Name("+janitor")
-	w.Write("tag", []byte("Tidy Debug"))
+	w.Write("tag", []byte("Tidy Log"))
 	h := handler{w: w}
 	go readlog(&h)
 	w.EventLoop(&h)
