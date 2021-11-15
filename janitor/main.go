@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,7 +23,9 @@ const (
 
 var (
 	// track the last time a window was interacted with
-	lastMod = make(map[int]time.Time)
+	lastmod = make(map[int]time.Time)
+	// track all the paths that have been opened
+	pathlog = make(map[string]bool)
 
 	// some windows are almost always ok to clean up
 	deleters = []delfunc{
@@ -50,9 +53,7 @@ func (h *handler) closeWin(winID int) {
 	if err != nil {
 		h.println("error opening window", winID, err)
 	}
-	if err := wp.Del(false); err == nil {
-		h.println("error deleting window", winID, err)
-	}
+	wp.Del(false) // ignore errors :shrug:
 }
 
 func (h *handler) ExecTidy(cmd string) {
@@ -64,7 +65,7 @@ func (h *handler) ExecTidy(cmd string) {
 		}
 		return false
 	}
-	for k, v := range lastMod {
+	for k, v := range lastmod {
 		if v.Before(time.Now().Add(-1 * oldCutoff)) {
 			h.closeWin(k)
 		}
@@ -81,8 +82,14 @@ func (h *handler) ExecTidy(cmd string) {
 }
 
 func (h *handler) ExecLog(cmd string) {
-	for k, v := range lastMod {
-		h.println("lastMod: ", k, v)
+	h.w.Clear()
+	var s []string
+	for k := range pathlog {
+		s = append(s, k)
+	}
+	sort.Strings(s)
+	for _, n := range s {
+		h.println(n)
 	}
 }
 
@@ -105,12 +112,14 @@ func readlog(h *handler) {
 		}
 		switch event.Op {
 		case "del":
-			delete(lastMod, event.ID)
+			delete(lastmod, event.ID)
 		case "get":
+			pathlog[event.Name] = true
 		case "focus":
 		default:
 			h.println(fmt.Sprint(event))
-			lastMod[event.ID] = time.Now()
+			lastmod[event.ID] = time.Now()
+			pathlog[event.Name] = true
 		}
 	}
 }
