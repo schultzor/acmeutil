@@ -30,10 +30,10 @@ var (
 	// track all the paths that have been opened
 	pathlog = make(map[string]bool)
 
-	// some windows are always ok to close
+	// some windows are usually ok to close
 	deleters = []delfunc{
 		func(w acme.WinInfo) bool { return strings.HasPrefix(w.Name, "/godocs/") },
-		func(w acme.WinInfo) bool { return strings.HasSuffix(w.Name, "+Errors") },
+		func(w acme.WinInfo) bool { return strings.HasSuffix(w.Name, "/+Errors") },
 		func(w acme.WinInfo) bool {
 			if stat, err := os.Stat(w.Name); err == nil {
 				return stat.IsDir()
