@@ -107,7 +107,9 @@ func (h *handler) ExecRevert(cmd string) {
 }
 
 func (h *handler) ExecAdd(cmd string) {
-	files := filter(strings.Fields(cmd), func(w string) bool { return w != "Add" })
+	words := strings.Fields(cmd)
+	files := filter(words, func(w string) bool { return w != "Add" })
+	debugf("command words: %v, files: %v", words, files)
 	args := []string{"add"}
 	args = append(args, files...)
 	if h.git(args...) != nil {
@@ -244,7 +246,7 @@ func (h *handler) ExecGet(cmd string) {
 	if status.branch == "master" || status.branch == "main" {
 		coName = tsbranch()
 	}
-	fmt.Fprintf(&h.buf, "on %s tracking %s\nCheckout %s\nCommit fix: something\n", status.branch, status.upstream, coName)
+	fmt.Fprintf(&h.buf, "on %s tracking %s\nCheckout %s\nCommit commit_message\n", status.branch, status.upstream, coName)
 	formatStatus(&h.buf, status)
 	h.flush()
 }
