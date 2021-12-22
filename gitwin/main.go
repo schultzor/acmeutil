@@ -35,8 +35,12 @@ type handler struct {
 	buf  bytes.Buffer
 }
 
+var (
+	branchTemplate string
+)
+
 func tsbranch() string {
-	return "patch-" + time.Now().Format("20060102-1504")
+	return time.Now().Format(branchTemplate)
 }
 
 func (h *handler) flush() {
@@ -87,7 +91,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	brPfx := os.Getenv("USER")
+	if brPfx == "" {
+		brPfx = "branch"
+	}
 	repoPath := flag.String("path", pwd, "path to repo root dir")
+	flag.StringVar(&branchTemplate, "branchTemplate", brPfx+"-200601021504", "template for default branch names, populated with time.Format")
 	flag.Parse()
 	if err := os.Chdir(*repoPath); err != nil {
 		log.Fatal("error doing chdir to repo:", err)
