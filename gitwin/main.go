@@ -91,12 +91,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	branchPrefix := os.Getenv("USER")
-	if branchPrefix == "" {
-		branchPrefix = "branch"
+	brPfx := os.Getenv("USER")
+	if brPfx == "" {
+		brPfx = "branch"
 	}
 	repoPath := flag.String("path", pwd, "path to repo root dir")
-	flag.StringVar(&branchTemplate, "branchTemplate", os.Getenv("USER")+"-200601021504", "time.Format-compatible template for generating branch names")
+	flag.StringVar(&branchTemplate, "branchTemplate", brPfx+"-200601021504", "template for default branch names, populated with time.Format")
 	flag.Parse()
 	if err := os.Chdir(*repoPath); err != nil {
 		log.Fatal("error doing chdir to repo:", err)
