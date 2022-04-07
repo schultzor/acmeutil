@@ -207,7 +207,11 @@ func (h *handler) ExecPull(cmd string) {
 }
 
 func (h *handler) ExecRebase(cmd string) {
-	h.git("pull", "--rebase")
+	args := []string{"rebase"}
+	if cmd != "" {
+		args = append(args, cmd)
+	}
+	h.git(args...)
 	h.repoWindows("get")
 	h.flush()
 }
