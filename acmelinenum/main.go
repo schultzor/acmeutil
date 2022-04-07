@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 
 	"9fans.net/go/acme"
 )
 
 func main() {
 	log.SetPrefix("linenum")
+	displayPath := flag.Bool("path", false, "if set, print file /file/path:linenum instead of just line number")
 	flag.Parse()
 	if flag.NArg() < 1 {
 		log.Fatal("expected window ID argument")
@@ -44,5 +46,11 @@ func main() {
 			count++
 		}
 	}
-	fmt.Println(count)
+	if *displayPath {
+		tb, _ := w.ReadAll("tag")
+		f := strings.Fields(string(tb))
+		fmt.Printf("%s:%d", f[0], count)
+	} else {
+		fmt.Println(count)
+	}
 }
