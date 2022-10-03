@@ -46,7 +46,7 @@ func newhandler() *handler {
 	check(err, "error creating acme window")
 	h := &handler{win: w}
 	w.Name("/godocs/")
-	w.Write("tag", []byte("Info Get All Src Pkg"))
+	w.Write("tag", []byte("Info Get All Src Pkg packageName Look lookFor"))
 	return h
 }
 
