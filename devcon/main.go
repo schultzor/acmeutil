@@ -4,6 +4,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/md5"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -62,24 +63,30 @@ func formatMount(src, dst string) []string {
 	return []string{"--mount", fmt.Sprintf("type=bind,source=%s,target=%s", src, dst)}
 }
 
-func main() {
-	sock := flag.String("s", "/tmp/devcontainer.sock", "unix socket to listen on for rpc commands")
-	dir := flag.String("d", ".devcontainer", "directory with devcontainer.json and Dockerfile")
-	wd := flag.String("l", ".", "local workspace to map into container")
-	ws := flag.String("w", "/workspace", "Working directory inside the container")
-	cmd := flag.String("docker", "docker", "name of docker command")
-	flag.Parse()
-	if len(flag.Args()) > 0 {
-		payload := strings.Join(flag.Args(), " ")
-		sendRpc(*sock, payload)
-		return
+func getWd() string {
+	if d, err := os.Getwd(); err == nil {
+		return d
 	}
-	containerFile := filepath.Join(*dir, "devcontainer.json")
-	dockerFile := filepath.Join(*dir, "Dockerfile")
-	log.Println("reading file", containerFile)
-	f, err := os.Open(containerFile)
+	return ""
+}
+
+func execCommand(dockerCmd, containerName string, cmd []string) {
+	execArgs := args{"exec", "-it", containerName, "sh", "-c"} // TODO: use shell defined in devcontainer.json instead
+	execArgs.AddString(strings.Join(cmd, " "))
+
+	log.Println("running:", execArgs)
+	runCmd := exec.Command(dockerCmd, execArgs...)
+	runCmd.Stdout = os.Stdout
+	runCmd.Stdin = os.Stdin
+	runCmd.Stderr = os.Stderr
+	runCmd.Run() // hold the container open until the command exits
+}
+
+func parseConfig(path string) (*cfgType, error) {
+	log.Println("reading file", path)
+	f, err := os.Open(path)
 	if err != nil {
-		log.Fatal("error opening file", containerFile, err)
+		return nil, err
 	}
 	defer f.Close()
 	// strip out comments, then decode
@@ -93,22 +100,63 @@ func main() {
 	decoder := json.NewDecoder(&bb)
 	var cfg cfgType
 	if err := decoder.Decode(&cfg); err != nil {
-		log.Fatal("error decoding file", err)
+		return nil, err
 	}
-	ctrl := new(Control)
-	rpcListener(*sock, ctrl)
-	defer os.Remove(*sock)
-	//log.Println("config:", cfg)
-	buildTag := fmt.Sprintf("localdevcon-%s:%d", strings.ToLower(cfg.Name), time.Now().Unix())
+	return &cfg, nil
+}
+
+func getNamePath(tmpDir, containerDir string) string {
+	if d, err := filepath.Abs(containerDir); err == nil {
+		containerDir = d
+	}
+	return filepath.Join(tmpDir, fmt.Sprintf("devcon.%x", md5.Sum([]byte(containerDir))))
+}
+
+func getName(namePath string) (string, bool) {
+	log.Println("checking for container name in", namePath)
+	if b, err := os.ReadFile(namePath); err == nil {
+		s := strings.TrimSpace(string(b))
+		if len(s) > 0 {
+			return s, true
+		}
+	}
+	return "", false
+}
+
+func main() {
+	tmp := flag.String("tmp", "/tmp", "temp directory for storing running container tags")
+	containerDir := flag.String("d", ".devcontainer", "directory with devcontainer.json and Dockerfile")
+	wd := flag.String("l", getWd(), "local workspace to map into container")
+	ws := flag.String("w", "/workspace", "Working directory inside the container")
+	cmd := flag.String("docker", "docker", "name of docker command")
+	flag.Parse()
+
+	namePath := getNamePath(*tmp, *containerDir)
+	if containerName, ok := getName(namePath); ok {
+		execCommand(*cmd, containerName, flag.Args())
+		return
+	}
+
+	log.Println("no container name found in", namePath, "- starting container instead...")
+	cfgFile := filepath.Join(*containerDir, "devcontainer.json")
+	dockerFile := filepath.Join(*containerDir, "Dockerfile")
+	cfg, err := parseConfig(cfgFile)
+	if err != nil {
+		log.Fatal("error parsing config file", err)
+	}
+
+	ts := time.Now().Unix()
+	containerName := fmt.Sprintf("localdevcon_%s_%d", strings.ToLower(cfg.Name), ts)
+	buildTag := fmt.Sprintf("localdevcon-%s:%d", strings.ToLower(cfg.Name), ts)
 	buildArgs := args{"build", "-t", buildTag, "-f", dockerFile}
 	buildArgs.Add(formatObject("--build-arg", cfg.Build.Args))
-	buildArgs.Add(args{*dir})
+	buildArgs.Add(args{*containerDir})
 	log.Println("running:", buildArgs)
 	if err := exec.Command(*cmd, buildArgs...).Run(); err != nil {
 		log.Fatal("error building container:", err)
 	}
 	shell := "sh" // TODO get from .settings.terminal.integrated.shell.linux ?
-	runArgs := args{"run", "--rm", "-it", "-w", *ws}
+	runArgs := args{"run", "--rm", "-it", "-w", *ws, "--name", containerName}
 	runArgs.Add(formatMount(*wd, *ws))
 	runArgs.Add(formatPorts(cfg.AppPort))
 	runArgs.Add(formatPorts(cfg.ForwardPorts))
@@ -116,10 +164,14 @@ func main() {
 	runArgs.Add(args{buildTag})
 	runArgs.Add(args{shell})
 
+	if err := os.WriteFile(namePath, []byte(containerName+"\n"), 0644); err != nil {
+		log.Fatal("error writing to tag file", namePath, err)
+	}
+	defer os.Remove(namePath)
 	log.Println("running:", runArgs)
 	runCmd := exec.Command(*cmd, runArgs...)
 	runCmd.Stdout = os.Stdout
 	runCmd.Stdin = os.Stdin
 	runCmd.Stderr = os.Stderr
-	runCmd.Run()
+	runCmd.Run() // hold the container open until the shell exits?
 }
