@@ -1,144 +1,96 @@
 package main
 
 import (
-	"fmt"
+	"flag"
 	"log"
-	"os"
-	"sort"
 	"strings"
 	"time"
 
 	"9fans.net/go/acme"
 )
 
-type handler struct {
-	w *acme.Win
-}
+var verbose bool
 
-type delfunc func(w acme.WinInfo) bool
-
-const (
-	oldCutoff = time.Hour * 24 * 3
-)
-
-var (
-	verbose = false
-
-	// track the last time a window was updated
-	lastmod = make(map[int]time.Time)
-
-	// track all the paths that have been opened
-	pathlog = make(map[string]bool)
-
-	// some windows are usually ok to close
-	deleters = []delfunc{
-		func(w acme.WinInfo) bool { return strings.HasPrefix(w.Name, "/godocs/") },
-		func(w acme.WinInfo) bool { return strings.HasSuffix(w.Name, "/+Errors") },
-		func(w acme.WinInfo) bool {
-			if stat, err := os.Stat(w.Name); err == nil {
-				return stat.IsDir()
-			}
-			return false
-		},
-	}
-)
-
-func canDelete(w acme.WinInfo) bool {
-	for _, f := range deleters {
-		if f(w) {
-			return true
-		}
-	}
-	return false
-}
-
-func (h *handler) println(a ...interface{}) {
-	h.w.Write("body", []byte(fmt.Sprint(a...)+"\n"))
-	h.w.Ctl("clean")
-}
-
-func (h *handler) closeWin(winID int) {
-	if winID == h.w.ID() {
-		return // don't close ourself
-	}
-	if wp, err := acme.Open(winID, nil); err == nil {
-		wp.Del(false) // ignore errors
+func logf(fmt string, v ...any) {
+	if verbose {
+		log.Printf(fmt, v...)
 	}
 }
 
-func (h *handler) ExecTidy(cmd string) {
-	for k, v := range lastmod {
-		if v.Before(time.Now().Add(-1 * oldCutoff)) {
-			h.closeWin(k)
-		}
-	}
-	allWin, err := acme.Windows()
-	if err != nil {
-		log.Fatal("error getting windows", err)
-	}
-	for _, wi := range allWin {
-		if canDelete(wi) {
-			h.closeWin(wi.ID)
-		}
-	}
-}
-
-func (h *handler) ExecVerbose(cmd string) {
-	verbose = !verbose
-}
-
-func (h *handler) ExecLog(cmd string) {
-	h.w.Clear()
-	var s []string
-	for k := range pathlog {
-		s = append(s, k)
-	}
-	sort.Strings(s)
-	for _, n := range s {
-		h.println(n)
-	}
-}
-
-func (h *handler) Execute(cmd string) bool {
-	return false
-}
-func (h *handler) Look(arg string) bool {
-	return false
-}
-
-func readlog(h *handler) {
-	l, err := acme.Log()
-	if err != nil {
-		log.Fatal(err)
-	}
-	for {
-		event, err := l.Read()
-		if err != nil {
-			log.Fatal(err)
-		}
-		if verbose {
-			h.println(fmt.Sprint(event))
-		}
-		pathlog[event.Name] = true
-		switch event.Op {
-		case "del":
-			delete(lastmod, event.ID)
-		case "focus": // ignore em
-		default:
-			lastmod[event.ID] = time.Now()
-		}
+func logv(v ...any) {
+	if verbose {
+		log.Println(v...)
 	}
 }
 
 func main() {
-	log.SetPrefix("janitor ")
-	w, err := acme.New()
+	freqSecs := flag.Int("f", 60, "frequency to tidy things up, in seconds")
+	deleteAgeHours := flag.Int("a", 32, "stale window deletion age, in hours")
+	flag.Parse()
+	log.SetPrefix("janitor:")
+	log.SetFlags(0)
+
+	// track the last time each window was touched
+	windows := make(map[int]time.Time)
+
+	l, err := acme.Log()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("couldn't open acme log", err)
 	}
-	w.Name("+janitor")
-	w.Write("tag", []byte("Log Tidy Verbose"))
-	h := handler{w: w}
-	go readlog(&h)
-	w.EventLoop(&h)
+	defer l.Close()
+	window, err := acme.New()
+	if err != nil {
+		log.Fatal("couldn't create acme window", err)
+	}
+	window.Name("+janitor")
+	uiEvents := window.EventChan()
+	acmeLogs := make(chan acme.LogEvent)
+	go func() {
+		for {
+			if e, err := l.Read(); err == nil {
+				acmeLogs <- e
+			} else {
+				log.Println(e)
+			}
+		}
+	}()
+
+	ticker := time.NewTicker(time.Duration(*freqSecs) * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case e := <-uiEvents:
+			switch e.C2 {
+			case 'x', 'X': // execute
+				cmd := strings.TrimSpace(string(e.Text))
+				logv("got window command", cmd)
+				window.WriteEvent(e)
+			}
+
+		case e := <-acmeLogs:
+			switch e.Op {
+			case "focus":
+			case "del":
+				delete(windows, e.ID)
+			default:
+				windows[e.ID] = time.Now()
+			}
+
+		case <-ticker.C:
+			cutoff := time.Now().Add(-1 * time.Duration(*deleteAgeHours) * time.Hour)
+			logv("cleaning up stale windows before", cutoff.Format(time.Stamp))
+			for id, v := range windows {
+				if id == window.ID() {
+					continue // don't mess with our window
+				}
+				if v.Before(cutoff) {
+					logv("removing window", id, "last touched at", v.Format(time.Stamp))
+					if w, err := acme.Open(id, nil); err == nil {
+						w.Del(false)
+					}
+				}
+			}
+		}
+	}
 }
