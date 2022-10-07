@@ -1,96 +1,196 @@
 package main
 
 import (
-	"flag"
+	"bytes"
+	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
 	"9fans.net/go/acme"
 )
 
-var verbose bool
-
-func logf(fmt string, v ...any) {
-	if verbose {
-		log.Printf(fmt, v...)
-	}
+func fatal(v ...any) {
+	log.Fatal(v...)
 }
 
-func logv(v ...any) {
-	if verbose {
-		log.Println(v...)
-	}
+func fmtTime(t time.Time) string {
+	return t.Format(time.Stamp)
 }
 
-func main() {
-	freqSecs := flag.Int("f", 60, "frequency to tidy things up, in seconds")
-	deleteAgeHours := flag.Int("a", 32, "stale window deletion age, in hours")
-	flag.Parse()
-	log.SetPrefix("janitor:")
-	log.SetFlags(0)
-
-	// track the last time each window was touched
-	windows := make(map[int]time.Time)
-
-	l, err := acme.Log()
-	if err != nil {
-		log.Fatal("couldn't open acme log", err)
-	}
-	defer l.Close()
-	window, err := acme.New()
-	if err != nil {
-		log.Fatal("couldn't create acme window", err)
-	}
-	window.Name("+janitor")
-	uiEvents := window.EventChan()
-	acmeLogs := make(chan acme.LogEvent)
+func readLogs(lr *acme.LogReader) chan acme.LogEvent {
+	c := make(chan acme.LogEvent)
 	go func() {
 		for {
-			if e, err := l.Read(); err == nil {
-				acmeLogs <- e
+			if e, err := lr.Read(); err == nil {
+				c <- e
 			} else {
-				log.Println(e)
+				break
 			}
 		}
 	}()
+	return c
+}
 
-	ticker := time.NewTicker(time.Duration(*freqSecs) * time.Second)
-	defer ticker.Stop()
+func isDir(p string) bool {
+	if f, err := os.Stat(p); err == nil {
+		return f.IsDir()
+	}
+	return false
+}
 
+func deleteWin(id int) {
+	if w, err := acme.Open(id, nil); err == nil {
+		w.Del(false)
+	}
+}
+
+type winLog struct {
+	ts time.Time
+	e  acme.LogEvent
+}
+
+type handler struct {
+	win      *acme.Win
+	acmeLogs chan acme.LogEvent
+	lastMod  map[int]winLog
+	staleAge time.Duration
+	debug    bool
+}
+
+func initHandler(lr *acme.LogReader) *handler {
+	w, err := acme.New()
+	if err != nil {
+		fatal("error creating acme window", err)
+	}
+	h := &handler{win: w,
+		acmeLogs: readLogs(lr),
+		lastMod:  make(map[int]winLog),
+		staleAge: time.Minute * 60,
+	}
+	h.win.Name("+janitor")
+	h.win.Write("tag", []byte("Debug List Expire Tidy"))
+	return h
+}
+
+func (h *handler) toggleDebug() {
+	h.debug = !h.debug
+}
+
+func (h *handler) tidy() {
+	wl, err := acme.Windows()
+	if err != nil {
+		log.Println("error listing acme windows:", err)
+		return
+	}
+	for _, w := range wl {
+		var deleteIt bool
+		switch {
+		case w.ID == h.win.ID():
+			h.log("ignoring our window id", w.ID)
+
+		case strings.HasPrefix(w.Name, "/godocs/"):
+			deleteIt = true
+		case strings.HasSuffix(w.Name, "+Errors"):
+			deleteIt = true
+		case isDir(w.Name):
+			deleteIt = true
+		}
+		if deleteIt {
+			h.log("deleting window", w.ID, "for", w.Name)
+			deleteWin(w.ID)
+		}
+	}
+}
+
+func (h *handler) log(v ...any) {
+	if h.debug {
+		h.win.Write("body", []byte(fmt.Sprintln(v...)))
+		h.win.Ctl("clean")
+	}
+}
+
+func (h *handler) logf(format string, v ...any) {
+	h.log(fmt.Sprintf(format, v...))
+}
+
+func (h *handler) deleteStaleWindows() {
+	cutoff := time.Now().Add(-1 * h.staleAge)
+	h.log("deleting windows that haven't changed since", fmtTime(cutoff))
+	for id, v := range h.lastMod {
+		if id == h.win.ID() {
+			continue
+		}
+		if v.ts.Before(cutoff) {
+			h.log("deleting window", id, v.e.Name, "last mod", fmtTime(v.ts))
+			deleteWin(id)
+		}
+	}
+}
+
+func (h *handler) list() {
+	var bb bytes.Buffer
+	fmt.Fprintf(&bb, "staleAge: %v, debug: %v\n", h.staleAge, h.debug)
+	for k, v := range h.lastMod {
+		fmt.Fprintf(&bb, "%d -> %s, last mod at %s\n", k, v.e.Name, fmtTime(v.ts))
+	}
+	h.win.Clear()
+	h.win.Write("body", bb.Bytes())
+	h.win.Ctl("clean")
+}
+
+func (h *handler) run() {
+	uiEvents := h.win.EventChan()
 	for {
 		select {
 		case e := <-uiEvents:
 			switch e.C2 {
 			case 'x', 'X': // execute
 				cmd := strings.TrimSpace(string(e.Text))
-				logv("got window command", cmd)
-				window.WriteEvent(e)
+				switch cmd {
+				case "Debug":
+					h.toggleDebug()
+				case "Tidy":
+					h.tidy()
+				case "Expire":
+					h.deleteStaleWindows()
+				case "List":
+					h.list()
+				case "Del":
+					h.win.WriteEvent(e)
+					return
+				default:
+					h.win.WriteEvent(e)
+				}
+			case 'l', 'L': // look
+				h.win.WriteEvent(e)
 			}
 
-		case e := <-acmeLogs:
+		case e := <-h.acmeLogs:
 			switch e.Op {
 			case "focus":
 			case "del":
-				delete(windows, e.ID)
+				h.log("deleting entry for", e.ID)
+				delete(h.lastMod, e.ID)
 			default:
-				windows[e.ID] = time.Now()
-			}
-
-		case <-ticker.C:
-			cutoff := time.Now().Add(-1 * time.Duration(*deleteAgeHours) * time.Hour)
-			logv("cleaning up stale windows before", cutoff.Format(time.Stamp))
-			for id, v := range windows {
-				if id == window.ID() {
-					continue // don't mess with our window
-				}
-				if v.Before(cutoff) {
-					logv("removing window", id, "last touched at", v.Format(time.Stamp))
-					if w, err := acme.Open(id, nil); err == nil {
-						w.Del(false)
-					}
-				}
+				h.log("updating timestamp for", e.ID)
+				h.lastMod[e.ID] = winLog{e: e, ts: time.Now()}
 			}
 		}
 	}
+}
+
+func main() {
+	log.SetPrefix("janitor:")
+	log.SetFlags(0)
+
+	acmeLog, err := acme.Log()
+	if err != nil {
+		log.Fatal("couldn't open acme log", err)
+	}
+	defer acmeLog.Close()
+	ui := initHandler(acmeLog)
+
+	ui.run()
 }

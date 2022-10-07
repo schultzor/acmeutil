@@ -3,7 +3,7 @@ module github.com/schultzor/acmeutil
 go 1.18
 
 require (
-	9fans.net/go v0.0.2
+	9fans.net/go v0.0.4
 	golang.org/x/mod v0.5.0
 )
 
