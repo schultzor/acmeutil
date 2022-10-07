@@ -89,7 +89,8 @@ func (h *handler) tidy() {
 		switch {
 		case w.ID == h.win.ID():
 			h.log("ignoring our window id", w.ID)
-
+		case strings.TrimSpace(w.Name) == "":
+			deleteIt = true
 		case strings.HasPrefix(w.Name, "/godocs/"):
 			deleteIt = true
 		case strings.HasSuffix(w.Name, "+Errors"):
