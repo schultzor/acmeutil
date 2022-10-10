@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"9fans.net/go/acme"
+	lru "github.com/hashicorp/golang-lru"
 )
 
 func fatal(v ...any) {
@@ -51,6 +52,7 @@ type handler struct {
 	lastMod  map[int]winLog
 	staleAge time.Duration
 	debug    bool
+	fnames   *lru.Cache
 }
 
 func initHandler(lr *acme.LogReader) *handler {
@@ -58,18 +60,34 @@ func initHandler(lr *acme.LogReader) *handler {
 	if err != nil {
 		fatal("error creating acme window", err)
 	}
+	fnCache, err := lru.New(500)
+	if err != nil {
+		fatal("error creating lru cache:", err)
+	}
 	h := &handler{win: w,
 		acmeLogs: readLogs(lr),
 		lastMod:  make(map[int]winLog),
 		staleAge: time.Minute * 60,
+		fnames:   fnCache,
 	}
 	h.win.Name("+janitor")
-	h.win.Write("tag", []byte("Debug List Expire Tidy"))
+	h.win.Write("tag", []byte("Debug Files List Expire Tidy"))
 	return h
 }
 
 func (h *handler) toggleDebug() {
 	h.debug = !h.debug
+}
+
+func (h *handler) fileNames() {
+	var bb bytes.Buffer
+	fmt.Fprintf(&bb, "last %d file names:\n", h.fnames.Len())
+	for _, fname := range h.fnames.Keys() {
+		fmt.Fprintf(&bb, "%v\n", fname)
+	}
+	h.win.Clear()
+	h.win.Write("body", bb.Bytes())
+	h.win.Ctl("clean")
 }
 
 func (h *handler) tidy() {
@@ -151,6 +169,8 @@ func (h *handler) run() {
 			case 'x', 'X': // execute
 				cmd := strings.TrimSpace(string(e.Text))
 				switch cmd {
+				case "Files":
+					h.fileNames()
 				case "Debug":
 					h.toggleDebug()
 				case "Tidy":
@@ -178,6 +198,9 @@ func (h *handler) run() {
 			default:
 				h.log("updating timestamp for", e.ID)
 				h.lastMod[e.ID] = winLog{e: e, ts: time.Now()}
+				if len(e.Name) > 0 {
+					h.fnames.Add(e.Name, true)
+				}
 			}
 		}
 	}
