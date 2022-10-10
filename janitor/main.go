@@ -40,12 +40,6 @@ func isDir(p string) bool {
 	return false
 }
 
-func deleteWin(id int) {
-	if w, err := acme.Open(id, nil); err == nil {
-		w.Del(false)
-	}
-}
-
 type winLog struct {
 	ts time.Time
 	e  acme.LogEvent
@@ -99,8 +93,16 @@ func (h *handler) tidy() {
 			deleteIt = true
 		}
 		if deleteIt {
-			h.log("deleting window", w.ID, "for", w.Name)
-			deleteWin(w.ID)
+			h.deleteWin(w.ID)
+		}
+	}
+}
+
+func (h *handler) deleteWin(id int) {
+	h.log("attempting to delete window", id)
+	if w, err := acme.Open(id, nil); err == nil {
+		if err := w.Del(false); err == nil {
+			delete(h.lastMod, id)
 		}
 	}
 }
@@ -124,8 +126,7 @@ func (h *handler) deleteStaleWindows() {
 			continue
 		}
 		if v.ts.Before(cutoff) {
-			h.log("deleting window", id, v.e.Name, "last mod", fmtTime(v.ts))
-			deleteWin(id)
+			h.deleteWin(id)
 		}
 	}
 }
