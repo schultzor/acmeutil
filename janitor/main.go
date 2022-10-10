@@ -1,144 +1,221 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
 	"9fans.net/go/acme"
+	lru "github.com/hashicorp/golang-lru"
 )
+
+func fatal(v ...any) {
+	log.Fatal(v...)
+}
+
+func fmtTime(t time.Time) string {
+	return t.Format(time.Stamp)
+}
+
+func readLogs(lr *acme.LogReader) chan acme.LogEvent {
+	c := make(chan acme.LogEvent)
+	go func() {
+		for {
+			if e, err := lr.Read(); err == nil {
+				c <- e
+			} else {
+				break
+			}
+		}
+	}()
+	return c
+}
+
+func isDir(p string) bool {
+	if f, err := os.Stat(p); err == nil {
+		return f.IsDir()
+	}
+	return false
+}
+
+type winLog struct {
+	ts time.Time
+	e  acme.LogEvent
+}
 
 type handler struct {
-	w *acme.Win
+	win      *acme.Win
+	acmeLogs chan acme.LogEvent
+	lastMod  map[int]winLog
+	staleAge time.Duration
+	debug    bool
+	fnames   *lru.Cache
 }
 
-type delfunc func(w acme.WinInfo) bool
-
-const (
-	oldCutoff = time.Hour * 24 * 3
-)
-
-var (
-	verbose = false
-
-	// track the last time a window was updated
-	lastmod = make(map[int]time.Time)
-
-	// track all the paths that have been opened
-	pathlog = make(map[string]bool)
-
-	// some windows are usually ok to close
-	deleters = []delfunc{
-		func(w acme.WinInfo) bool { return strings.HasPrefix(w.Name, "/godocs/") },
-		func(w acme.WinInfo) bool { return strings.HasSuffix(w.Name, "/+Errors") },
-		func(w acme.WinInfo) bool {
-			if stat, err := os.Stat(w.Name); err == nil {
-				return stat.IsDir()
-			}
-			return false
-		},
-	}
-)
-
-func canDelete(w acme.WinInfo) bool {
-	for _, f := range deleters {
-		if f(w) {
-			return true
-		}
-	}
-	return false
-}
-
-func (h *handler) println(a ...interface{}) {
-	h.w.Write("body", []byte(fmt.Sprint(a...)+"\n"))
-	h.w.Ctl("clean")
-}
-
-func (h *handler) closeWin(winID int) {
-	if winID == h.w.ID() {
-		return // don't close ourself
-	}
-	if wp, err := acme.Open(winID, nil); err == nil {
-		wp.Del(false) // ignore errors
-	}
-}
-
-func (h *handler) ExecTidy(cmd string) {
-	for k, v := range lastmod {
-		if v.Before(time.Now().Add(-1 * oldCutoff)) {
-			h.closeWin(k)
-		}
-	}
-	allWin, err := acme.Windows()
+func initHandler(lr *acme.LogReader) *handler {
+	w, err := acme.New()
 	if err != nil {
-		log.Fatal("error getting windows", err)
+		fatal("error creating acme window", err)
 	}
-	for _, wi := range allWin {
-		if canDelete(wi) {
-			h.closeWin(wi.ID)
+	fnCache, err := lru.New(500)
+	if err != nil {
+		fatal("error creating lru cache:", err)
+	}
+	h := &handler{win: w,
+		acmeLogs: readLogs(lr),
+		lastMod:  make(map[int]winLog),
+		staleAge: time.Minute * 60,
+		fnames:   fnCache,
+	}
+	h.win.Name("+janitor")
+	h.win.Write("tag", []byte("Debug Files List Expire Tidy"))
+	return h
+}
+
+func (h *handler) toggleDebug() {
+	h.debug = !h.debug
+}
+
+func (h *handler) fileNames() {
+	var bb bytes.Buffer
+	fmt.Fprintf(&bb, "last %d file names:\n", h.fnames.Len())
+	for _, fname := range h.fnames.Keys() {
+		fmt.Fprintf(&bb, "%v\n", fname)
+	}
+	h.win.Clear()
+	h.win.Write("body", bb.Bytes())
+	h.win.Ctl("clean")
+}
+
+func (h *handler) tidy() {
+	wl, err := acme.Windows()
+	if err != nil {
+		log.Println("error listing acme windows:", err)
+		return
+	}
+	for _, w := range wl {
+		var deleteIt bool
+		switch {
+		case w.ID == h.win.ID():
+			h.log("ignoring our window id", w.ID)
+		case strings.TrimSpace(w.Name) == "":
+			deleteIt = true
+		case strings.HasPrefix(w.Name, "/godocs/"):
+			deleteIt = true
+		case strings.HasSuffix(w.Name, "+Errors"):
+			deleteIt = true
+		case isDir(w.Name):
+			deleteIt = true
+		}
+		if deleteIt {
+			h.deleteWin(w.ID)
 		}
 	}
 }
 
-func (h *handler) ExecVerbose(cmd string) {
-	verbose = !verbose
-}
-
-func (h *handler) ExecLog(cmd string) {
-	h.w.Clear()
-	var s []string
-	for k := range pathlog {
-		s = append(s, k)
-	}
-	sort.Strings(s)
-	for _, n := range s {
-		h.println(n)
+func (h *handler) deleteWin(id int) {
+	h.log("attempting to delete window", id)
+	if w, err := acme.Open(id, nil); err == nil {
+		if err := w.Del(false); err == nil {
+			delete(h.lastMod, id)
+		}
 	}
 }
 
-func (h *handler) Execute(cmd string) bool {
-	return false
-}
-func (h *handler) Look(arg string) bool {
-	return false
+func (h *handler) log(v ...any) {
+	if h.debug {
+		h.win.Write("body", []byte(fmt.Sprintln(v...)))
+		h.win.Ctl("clean")
+	}
 }
 
-func readlog(h *handler) {
-	l, err := acme.Log()
-	if err != nil {
-		log.Fatal(err)
+func (h *handler) logf(format string, v ...any) {
+	h.log(fmt.Sprintf(format, v...))
+}
+
+func (h *handler) deleteStaleWindows() {
+	cutoff := time.Now().Add(-1 * h.staleAge)
+	h.log("deleting windows that haven't changed since", fmtTime(cutoff))
+	for id, v := range h.lastMod {
+		if id == h.win.ID() {
+			continue
+		}
+		if v.ts.Before(cutoff) {
+			h.deleteWin(id)
+		}
 	}
+}
+
+func (h *handler) list() {
+	var bb bytes.Buffer
+	fmt.Fprintf(&bb, "staleAge: %v, debug: %v\n", h.staleAge, h.debug)
+	for k, v := range h.lastMod {
+		fmt.Fprintf(&bb, "%d -> %s, last mod at %s\n", k, v.e.Name, fmtTime(v.ts))
+	}
+	h.win.Clear()
+	h.win.Write("body", bb.Bytes())
+	h.win.Ctl("clean")
+}
+
+func (h *handler) run() {
+	uiEvents := h.win.EventChan()
 	for {
-		event, err := l.Read()
-		if err != nil {
-			log.Fatal(err)
-		}
-		if verbose {
-			h.println(fmt.Sprint(event))
-		}
-		pathlog[event.Name] = true
-		switch event.Op {
-		case "del":
-			delete(lastmod, event.ID)
-		case "focus": // ignore em
-		default:
-			lastmod[event.ID] = time.Now()
+		select {
+		case e := <-uiEvents:
+			switch e.C2 {
+			case 'x', 'X': // execute
+				cmd := strings.TrimSpace(string(e.Text))
+				switch cmd {
+				case "Files":
+					h.fileNames()
+				case "Debug":
+					h.toggleDebug()
+				case "Tidy":
+					h.tidy()
+				case "Expire":
+					h.deleteStaleWindows()
+				case "List":
+					h.list()
+				case "Del":
+					h.win.WriteEvent(e)
+					return
+				default:
+					h.win.WriteEvent(e)
+				}
+			case 'l', 'L': // look
+				h.win.WriteEvent(e)
+			}
+
+		case e := <-h.acmeLogs:
+			switch e.Op {
+			case "focus":
+			case "del":
+				h.log("deleting entry for", e.ID)
+				delete(h.lastMod, e.ID)
+			default:
+				h.log("updating timestamp for", e.ID)
+				h.lastMod[e.ID] = winLog{e: e, ts: time.Now()}
+				if len(e.Name) > 0 {
+					h.fnames.Add(e.Name, true)
+				}
+			}
 		}
 	}
 }
 
 func main() {
-	log.SetPrefix("janitor ")
-	w, err := acme.New()
+	log.SetPrefix("janitor:")
+	log.SetFlags(0)
+
+	acmeLog, err := acme.Log()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("couldn't open acme log", err)
 	}
-	w.Name("+janitor")
-	w.Write("tag", []byte("Log Tidy Verbose"))
-	h := handler{w: w}
-	go readlog(&h)
-	w.EventLoop(&h)
+	defer acmeLog.Close()
+	ui := initHandler(acmeLog)
+
+	ui.run()
 }
