@@ -105,6 +105,8 @@ func (h *handler) tidy() {
 			deleteIt = true
 		case strings.HasPrefix(w.Name, "/godocs/"):
 			deleteIt = true
+		case strings.HasSuffix(w.Name, ".tmp"):
+			deleteIt = true
 		case strings.HasSuffix(w.Name, "+Errors"):
 			deleteIt = true
 		case isDir(w.Name):
