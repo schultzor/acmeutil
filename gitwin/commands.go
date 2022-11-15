@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"log"
@@ -137,7 +138,24 @@ func (h *handler) ExecBranches(cmd string) {
 
 func (h *handler) ExecLs(cmd string) {
 	h.git("ls-files")
+	if cmd == "" {
+		var tmp bytes.Buffer
+		scanner := bufio.NewScanner(&h.buf)
+		for scanner.Scan() {
+			b := scanner.Bytes()
+			if strings.HasPrefix(string(b), "vendor/") {
+				continue
+			}
+			tmp.Write(b)
+			tmp.WriteString("\n")
+		}
+		h.buf = tmp
+	}
 	h.flush()
+}
+
+func (h *handler) ExecLsAll(cmd string) {
+	h.ExecLs("all")
 }
 
 func (h *handler) ExecCheckout(cmd string) {
