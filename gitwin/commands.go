@@ -80,7 +80,6 @@ func (h *handler) repoWindows(winCmd string) {
 	}
 }
 
-
 func (h *handler) ExecDelWindows() {
 	h.repoWindows("del")
 }
@@ -163,8 +162,8 @@ func (h *handler) ExecCheckout(cmd string) {
 	debugf("doing ExecCheckout [%s]\n", cmd)
 	args := []string{"checkout"}
 	switch {
-	case cmd == "master":
-	case cmd == "main":
+	case cmd == "master" || cmd == "main":
+		args = append(args, cmd)
 
 	case strings.Contains(cmd, "/"): // checkout a branch that tracks a remote
 		split := strings.Split(cmd, "/")
