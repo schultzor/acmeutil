@@ -132,7 +132,7 @@ func (h *handler) ExecUnstage(cmd string) {
 }
 
 func (h *handler) ExecBranches(cmd string) {
-	h.git("branch")
+	h.git("branch", "-a")
 	h.flush()
 }
 
@@ -161,10 +161,17 @@ func (h *handler) ExecLsAll(cmd string) {
 func (h *handler) ExecCheckout(cmd string) {
 	debugf("doing ExecCheckout [%s]\n", cmd)
 	args := []string{"checkout"}
-	if cmd != "master" && cmd != "main" {
-		args = append(args, "-B")
+	switch {
+	case cmd == "master":
+	case cmd == "main":
+
+	case strings.Contains(cmd, "/"): // checkout a branch that tracks a remote
+		split := strings.Split(cmd, "/")
+		args = append(args, "-b", split[len(split)-1], cmd)
+
+	default: // checkout a new local branch
+		args = append(args, "-B", cmd)
 	}
-	args = append(args, cmd)
 	if h.git(args...) != nil {
 		h.flush()
 	} else {
@@ -239,12 +246,16 @@ func (h *handler) ExecPush(cmd string) {
 	if err != nil {
 		log.Fatalf("error getting status: %v", err)
 	}
+	args := []string{"push", "origin"}
 	remote := status.branch
 	if status.branch == "master" || status.branch == "main" {
 		remote = tsbranch()
 		fmt.Fprintf(&h.buf, "pushing to remote branch %s instead of main/master\n", remote)
+	} else {
+		args = append(args, "--set-upstream")
 	}
-	h.git("push", "origin", status.branch+":"+remote)
+	args = append(args, status.branch+":"+remote)
+	h.git(args...)
 	h.flush()
 }
 
