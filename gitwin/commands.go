@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 
 	"9fans.net/go/acme"
@@ -47,24 +48,12 @@ func (h *handler) ExecRemote(cmd string) {
 	h.flush()
 }
 
-type wordFilterFunc func(string) bool
-
 func regularFile(p string) bool {
 	debugf("regularFile checking %s\n", p)
 	if fi, err := os.Lstat(p); err == nil && fi.Mode().IsRegular() {
 		return true
 	}
 	return false
-}
-
-func filter(words []string, filt wordFilterFunc) []string {
-	ret := []string{}
-	for _, w := range words {
-		if filt(w) {
-			ret = append(ret, w)
-		}
-	}
-	return ret
 }
 
 func (h *handler) repoWindows(winCmd string) {
@@ -87,7 +76,7 @@ func (h *handler) ExecDelWindows() {
 func (h *handler) ExecRevert(cmd string) {
 	debugf("doing ExecRevert [%s]\n", cmd)
 	args := []string{"checkout", "--"}
-	files := filter(strings.Fields(cmd), func(w string) bool { return w != "Revert" })
+	files := slices.DeleteFunc(strings.Fields(cmd), func(w string) bool { return w == "Revert" })
 	args = append(args, files...)
 	h.git(args...)
 
@@ -109,7 +98,7 @@ func (h *handler) ExecRevert(cmd string) {
 
 func (h *handler) ExecAdd(cmd string) {
 	words := strings.Fields(cmd)
-	files := filter(words, func(w string) bool { return w != "Add" })
+	files := slices.DeleteFunc(words, func(w string) bool { return w == "Add" })
 	debugf("command words: %v, files: %v", words, files)
 	args := []string{"add"}
 	args = append(args, files...)
@@ -121,7 +110,7 @@ func (h *handler) ExecAdd(cmd string) {
 }
 
 func (h *handler) ExecUnstage(cmd string) {
-	files := filter(strings.Fields(cmd), func(w string) bool { return w != "Unstage" })
+	files := slices.DeleteFunc(strings.Fields(cmd), func(w string) bool { return w == "Unstage" })
 	args := []string{"restore", "--staged"}
 	args = append(args, files...)
 	if h.git(args...) != nil {
