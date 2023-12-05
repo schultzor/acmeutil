@@ -236,14 +236,18 @@ func (h *handler) ExecPush(cmd string) {
 		log.Fatalf("error getting status: %v", err)
 	}
 	args := []string{"push", "origin"}
-	remote := status.branch
-	if status.branch == "master" || status.branch == "main" {
-		remote = tsbranch()
-		fmt.Fprintf(&h.buf, "pushing to remote branch %s instead of main/master\n", remote)
+	if len(cmd) > 0 {
+		// just push to origin directly ?
 	} else {
-		args = append(args, "--set-upstream")
+		remote := status.branch
+		if status.branch == "master" || status.branch == "main" {
+			remote = tsbranch()
+			fmt.Fprintf(&h.buf, "pushing to remote branch %s instead of main/master\n", remote)
+		} else {
+			args = append(args, "--set-upstream")
+		}
+		args = append(args, status.branch+":"+remote)
 	}
-	args = append(args, status.branch+":"+remote)
 	h.git(args...)
 	h.flush()
 }
